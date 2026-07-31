@@ -1,0 +1,35 @@
+# Credentials — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.aws/
+aws-exports.js
+
+# SAM / CloudFormation
+.aws-sam/
+samconfig.toml
+packaged.yaml
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# Node
+node_modules/
+dist/
+build/
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
