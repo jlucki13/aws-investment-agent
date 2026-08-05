@@ -1,0 +1,292 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Portfolio Monitor - daily holdings brief
+
+Parameters:
+  UserId:
+    Type: String
+    Default: me
+    Description: Partition key for your positions. Single-user app, so a constant is fine.
+
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: >
+      Where the daily brief is sent. Must be a verified SES identity while your
+      account is in the SES sandbox. Leave blank to skip email and only write the
+      brief to DynamoDB.
+
+  BedrockModelId:
+    Type: String
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+    Description: >
+      Bedrock inference profile. Verify with:
+        aws bedrock list-inference-profiles --region us-east-1
+      Newer Claude models require the regional profile (us. prefix), not the bare
+      model ID. You must also request model access in the Bedrock console first.
+
+  TwelveDataParamName:
+    Type: String
+    Default: /portfolio/twelvedata/apikey
+    Description: SSM Parameter Store name holding your Twelve Data API key (SecureString).
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Globals:
+  Function:
+    Runtime: python3.13
+    # Graviton - cheaper per GB-second and no downside for this workload.
+    Architectures: [arm64]
+    Timeout: 30
+    MemorySize: 512
+    Layers: [!Ref CommonLayer]
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref PortfolioTable
+        USER_ID: !Ref UserId
+        POWERTOOLS_LOG_LEVEL: INFO
+
+Resources:
+  # ------------------------------------------------------------------
+  # Data
+  # ------------------------------------------------------------------
+
+  PortfolioTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AWS::StackName}-portfolio"
+      # PAY_PER_REQUEST scales to zero and never throttles. The always-free 25
+      # RCU/WCU only applies to PROVISIONED mode, but at this scale on-demand
+      # costs well under a cent a month, and the free 25 GB of storage applies
+      # either way. Simplicity wins here.
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: false
+
+  ScreenshotBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-screenshots-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      LifecycleConfiguration:
+        Rules:
+          # Screenshots are only needed until you've confirmed the extraction.
+          - Id: expire-raw-screenshots
+            Status: Enabled
+            ExpirationInDays: 90
+      CorsConfiguration:
+        CorsRules:
+          - AllowedMethods: [PUT, GET]
+            AllowedOrigins: ["*"] # Tighten to your CloudFront domain once deployed.
+            AllowedHeaders: ["*"]
+            MaxAge: 3000
+
+  # ------------------------------------------------------------------
+  # Shared code
+  # ------------------------------------------------------------------
+
+  CommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "${AWS::StackName}-common"
+      ContentUri: layers/common/
+      CompatibleRuntimes: [python3.13]
+      CompatibleArchitectures: [arm64]
+    Metadata:
+      BuildMethod: python3.13
+      BuildArchitecture: arm64
+
+  # ------------------------------------------------------------------
+  # API
+  # ------------------------------------------------------------------
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: v1
+      CorsConfiguration:
+        AllowOrigins: ["*"] # Tighten to your CloudFront domain once deployed.
+        AllowHeaders: [content-type]
+        AllowMethods: [GET, POST, PUT, DELETE, OPTIONS]
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/api/
+      Handler: app.handler
+      Description: Positions CRUD and brief retrieval
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PortfolioTable
+      Events:
+        Any:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+  ApiFunctionLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ApiFunction}"
+      # Log groups default to never expiring, which quietly accrues storage cost.
+      RetentionInDays: 7
+
+  # ------------------------------------------------------------------
+  # Daily pipeline
+  # ------------------------------------------------------------------
+
+  FetchPricesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/fetch_prices/
+      Handler: app.handler
+      Description: Pull daily closes from Twelve Data into the price history
+      Timeout: 60
+      Environment:
+        Variables:
+          TWELVEDATA_PARAM_NAME: !Ref TwelveDataParamName
+          PRICE_TTL_DAYS: "400"
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PortfolioTable
+        - SSMParameterReadPolicy:
+            ParameterName: !Ref TwelveDataParamName
+
+  FetchPricesLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${FetchPricesFunction}"
+      RetentionInDays: 7
+
+  AnalyzeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/analyze/
+      Handler: app.handler
+      Description: Compute portfolio facts, narrate them via Bedrock, email the brief
+      Timeout: 120
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          ALERT_EMAIL: !Ref AlertEmail
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PortfolioTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              # Inference profiles fan out across regions, so the profile ARN and
+              # the underlying foundation models all need to be grantable.
+              Resource:
+                - !Sub "arn:aws:bedrock:*::foundation-model/*"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+        - !If
+          - HasEmail
+          - Statement:
+              - Effect: Allow
+                Action: [ses:SendEmail]
+                Resource: "*"
+          - !Ref AWS::NoValue
+
+  AnalyzeLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AnalyzeFunction}"
+      RetentionInDays: 7
+
+  # ------------------------------------------------------------------
+  # Schedule
+  # ------------------------------------------------------------------
+
+  # 22:00 UTC weekdays = 6pm EDT / 5pm EST, comfortably after the 4pm ET close
+  # in both halves of the year. EventBridge cron is always UTC.
+  DailyPipeline:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: EXPRESS
+      Definition:
+        StartAt: FetchPrices
+        States:
+          FetchPrices:
+            Type: Task
+            Resource: !GetAtt FetchPricesFunction.Arn
+            Next: Analyze
+            Retry:
+              - ErrorEquals: [States.ALL]
+                IntervalSeconds: 30
+                MaxAttempts: 3
+                BackoffRate: 2.0
+          Analyze:
+            Type: Task
+            Resource: !GetAtt AnalyzeFunction.Arn
+            End: true
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref FetchPricesFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AnalyzeFunction
+        - CloudWatchLogsFullAccess
+      Logging:
+        Level: ERROR
+        IncludeExecutionData: false
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt PipelineLogs.Arn
+      Events:
+        Weekdays:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 22 ? * MON-FRI *)
+            Description: Run the portfolio brief after US market close
+
+  PipelineLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-pipeline"
+      RetentionInDays: 7
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for the API
+    Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/v1"
+
+  TableName:
+    Description: DynamoDB table name
+    Value: !Ref PortfolioTable
+
+  ScreenshotBucketName:
+    Description: S3 bucket for holdings screenshots
+    Value: !Ref ScreenshotBucket
+
+  FetchPricesFunctionName:
+    Description: Invoke manually with - sam remote invoke <name> --stack-name <stack>
+    Value: !Ref FetchPricesFunction
+
+  AnalyzeFunctionName:
+    Description: Invoke manually with - sam remote invoke <name> --stack-name <stack>
+    Value: !Ref AnalyzeFunction

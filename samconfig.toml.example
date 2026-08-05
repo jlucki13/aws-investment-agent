@@ -1,0 +1,26 @@
+# Copy to samconfig.toml (gitignored) and fill in.
+# Generated for you the first time you run `sam deploy --guided`.
+
+version = 0.1
+
+[default.global.parameters]
+stack_name = "portfolio-monitor"
+
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy.parameters]
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+confirm_changeset = true
+parameter_overrides = [
+  "UserId=me",
+  "AlertEmail=you@example.com",
+  "BedrockModelId=us.anthropic.claude-haiku-4-5-20251001-v1:0",
+  "TwelveDataParamName=/portfolio/twelvedata/apikey",
+]
+
+[default.sync.parameters]
+watch = false

@@ -1,0 +1,2 @@
+# boto3 and botocore ship with the Lambda Python runtime, so nothing is needed
+# here yet. Keeping the file present so `sam build` treats this as a Python layer.

@@ -1,0 +1,1 @@
+# No dependencies - urllib.request from the stdlib handles the HTTP call.
