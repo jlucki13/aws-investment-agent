@@ -5,6 +5,13 @@
 > (750 hours of EC2 t2.micro, etc.). That offer no longer applies to new accounts.
 > If a guide tells you "you get 750 free EC2 hours for a year," it's out of date.
 
+> ### Already have an AWS account?
+>
+> **Skip to [Using an existing account](#using-an-existing-account) below.** The plan
+> choice and signup walkthrough don't apply to you, but the hardening and billing
+> steps do — plus one audit step that's specific to accounts that have been sitting
+> idle.
+
 ---
 
 ## What "free" actually means now
@@ -47,7 +54,65 @@ authorization hold (about $1) to verify it, then releases it.
 
 ---
 
+## Using an existing account
+
+If you already have an AWS account from some earlier project, use it. Two things change.
+
+**What you don't get:** the $200 in credits and the Free/Paid plan choice are
+new-account-only, and if the account is more than a year old its 12-month free tier
+expired long ago. You're on straight pay-as-you-go.
+
+**What you do keep:** the **always-free** monthly limits — Lambda's 1M requests,
+DynamoDB's 25 GB, CloudFront's 1 TB — apply regardless of account age. Those are what
+this project actually runs on, so the cost estimate is unchanged at **~$0.35/month**,
+all of it Bedrock. The credits would only have covered that for a while anyway.
+
+### Audit before you build
+
+A dormant account is worth checking before you add to it. Forgotten resources bill
+quietly for years, and old access keys are a genuine security risk.
+
+Sign in via **"Sign in using root user email"** — the IAM sign-in form needs a 12-digit
+account ID you almost certainly don't remember. Use "Forgot password" if needed.
+
+1. **Billing and Cost Management → Bills.** Current month, expanded **by service**.
+   Should be $0.00.
+2. **Cost Explorer → last 6 months, grouped by service.** Catches anything that bills
+   irregularly rather than monthly.
+3. If either shows charges, the usual culprits are EC2 instances, EBS volumes orphaned
+   by deleted instances, unattached Elastic IPs (~$3.60/mo each), RDS instances, NAT
+   Gateways (~$32/mo), and Route 53 hosted zones. The Bills page breaks down by region,
+   which saves hunting through the region selector one at a time.
+4. **IAM → Users → each user → Security credentials.** Delete any access key you can't
+   account for. A stale key committed to some old repo is the single most common way a
+   personal AWS account gets drained.
+5. **IAM → Users.** Delete users from projects that are over. Fewer credentials, fewer
+   ways in.
+
+If it's all zeros, that's five minutes well spent and the account is fine to use.
+
+### Then continue below
+
+Skip the signup section. Do these, checking whether each is already done:
+
+- **Step 2** — MFA on root. Often missing on older accounts set up before you cared.
+- **Step 3** — admin IAM user. This is what fills in the Account ID / username /
+  password fields on the IAM sign-in page.
+- **Step 4** — set region to `us-east-1`.
+- **Step 5** — billing access, free tier alerts, and the **$5 budget**. Do this one
+  regardless of what the audit found.
+- **Steps 6–7** — AWS CLI and SAM CLI.
+
+> **Not worth doing:** creating a fresh account on another email to claim the $200 in
+> credits. AWS ties free tier eligibility to the customer rather than the account, so
+> the credits may not appear, and you'd maintain two accounts to save about four
+> dollars.
+
+---
+
 ## Step-by-step signup
+
+> Skip this section if you already have an account.
 
 ### 1. Create the account
 
@@ -230,7 +295,8 @@ Those four survive most cleanups.
 
 ## Your first-day checklist
 
-- [ ] Account created, plan chosen deliberately
+- [ ] Account created, plan chosen deliberately *(new accounts)*
+- [ ] Existing account audited — $0 in Bills, no unrecognized access keys *(existing accounts)*
 - [ ] MFA on root user
 - [ ] No root access keys
 - [ ] Admin IAM user created, with its own MFA
