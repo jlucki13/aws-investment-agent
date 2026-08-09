@@ -178,8 +178,16 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref PortfolioTable
-        - SSMParameterReadPolicy:
-            ParameterName: !Ref TwelveDataParamName
+        # Not SSMParameterReadPolicy: it builds the resource ARN as
+        # "parameter/${ParameterName}", and TwelveDataParamName already starts
+        # with "/" (SSM parameter names in a hierarchy require the leading
+        # slash), producing a double slash that never matches the real
+        # parameter ARN -- silently granting access to nothing. Build the ARN
+        # explicitly instead.
+        - Statement:
+            - Effect: Allow
+              Action: [ssm:GetParameter]
+              Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TwelveDataParamName}"
 
   FetchPricesLogs:
     Type: AWS::Logs::LogGroup
