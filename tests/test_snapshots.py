@@ -87,7 +87,6 @@ def test_parse_extraction_response_drops_bad_entries_keeps_good():
         {"ticker": "AAPL", "shares": 10, "costBasis": 150.5, "confidence": "high"},
         {"ticker": "", "shares": 10, "costBasis": 150.5},
         {"ticker": "BAD_SHARES", "shares": "not a number", "costBasis": 10},
-        {"ticker": "BAD_COST", "shares": 10, "costBasis": null},
         "not even an object",
         {"ticker": "GOOD2", "shares": 3, "costBasis": 20, "confidence": "bogus"}
     ]"""
@@ -96,6 +95,29 @@ def test_parse_extraction_response_drops_bad_entries_keeps_good():
     assert tickers == ["AAPL", "GOOD2"]
     # invalid confidence value falls back to medium rather than being dropped
     assert rows[1]["confidence"] == "medium"
+
+
+def test_parse_extraction_response_keeps_row_with_null_cost_basis():
+    """Regression test for a real production incident: a brokerage 'positions'
+    view showed current price and market value but no cost-basis field at
+    all. The model correctly reported costBasis: null per the prompt instead
+    of substituting price -- that row must survive with costBasis == None,
+    not get dropped (dropping would also throw away a correctly-read ticker
+    and share count for no reason)."""
+    raw = """[
+        {"ticker": "SCHW", "shares": 12, "costBasis": null, "confidence": "high"}
+    ]"""
+    rows = snapshots.parse_extraction_response(raw)
+    assert rows == [
+        {"ticker": "SCHW", "shares": 12, "costBasis": None, "confidence": "high"}
+    ]
+
+
+def test_parse_extraction_response_missing_cost_basis_key_is_also_kept():
+    raw = '[{"ticker": "SCHW", "shares": 12, "confidence": "medium"}]'
+    rows = snapshots.parse_extraction_response(raw)
+    assert rows[0]["costBasis"] is None
+    assert rows[0]["ticker"] == "SCHW"
 
 
 def test_parse_extraction_response_garbage_input_returns_empty():

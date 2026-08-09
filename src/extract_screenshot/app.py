@@ -34,16 +34,25 @@ into structured data.
 
 Output ONLY a JSON array, no prose, no markdown code fences. Each element:
 
-    {"ticker": str, "shares": number, "costBasis": number, "confidence": "high"|"medium"|"low"}
+    {"ticker": str, "shares": number, "costBasis": number|null, "confidence": "high"|"medium"|"low"}
 
 Rules:
 1. ticker is the exchange ticker symbol only, uppercase -- never the company
    name. A row showing "Apple Inc AAPL" extracts as "AAPL", not "Apple Inc".
-2. costBasis is the per-share average cost basis, not a position total.
-3. If you cannot read a row confidently, omit it entirely rather than guessing
-   at a number. A missing row gets caught by human review; a wrong number
-   silently corrupts their portfolio math downstream.
-4. confidence reflects how legible that row was in the image, not how sure you
+2. costBasis is the per-share AVERAGE COST -- a field the screenshot must
+   itself label as cost, avg cost, cost basis, or similar. It is a different
+   number from the current share price and from the position's market value.
+   Many brokerage "positions"/"holdings" views show price and market value
+   but never show cost basis at all (that often lives on a separate
+   "gain/loss" or "performance" screen). If no field is specifically labeled
+   as cost/average cost, set costBasis to null. Do NOT substitute the current
+   price, the market value, or any other visible number as a guess -- a wrong
+   cost basis silently corrupts every profit/loss calculation downstream,
+   which is worse than leaving it blank for a human to fill in.
+3. ticker and shares are required; omit the row entirely if either is
+   illegible. costBasis may legitimately be null per rule 2 -- that alone is
+   never a reason to omit the row.
+4. confidence reflects how legible the row was in the image, not how sure you
    are that it represents a real holding.
 """
 

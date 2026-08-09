@@ -77,9 +77,16 @@ def _validate_row(entry: Any) -> dict[str, Any] | None:
         return None
 
     shares = _coerce_number(entry.get("shares"))
-    cost_basis = _coerce_number(entry.get("costBasis"))
-    if shares is None or cost_basis is None:
+    if shares is None:
         return None
+
+    # costBasis is allowed to be missing/null -- the model is instructed to
+    # report null rather than substitute price or market value when a
+    # screenshot's holdings view doesn't show average cost at all (it often
+    # lives on a separate tab). The review screen renders that as a blank
+    # field for the user to fill in, instead of silently carrying a
+    # plausible-looking but wrong number into the portfolio.
+    cost_basis = _coerce_number(entry.get("costBasis"))
 
     confidence = entry.get("confidence")
     if confidence not in _VALID_CONFIDENCE:
