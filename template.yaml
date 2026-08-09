@@ -144,7 +144,10 @@ Resources:
       Description: Positions CRUD and brief retrieval
       Environment:
         Variables:
-          SCREENSHOT_BUCKET_NAME: !Ref ScreenshotBucket
+          # A literal computed name/ARN, not !Ref/!GetAtt ScreenshotBucket --
+          # see the comment on ExtractScreenshotFunction's identical pattern
+          # below for why.
+          SCREENSHOT_BUCKET_NAME: !Sub "${AWS::StackName}-screenshots-${AWS::AccountId}"
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref PortfolioTable
@@ -154,7 +157,7 @@ Resources:
               # permissions -- API Gateway's caller doesn't need S3 access,
               # this function's execution role does.
               Action: [s3:PutObject, s3:GetObject]
-              Resource: !Sub "${ScreenshotBucket.Arn}/*"
+              Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-screenshots-${AWS::AccountId}/*"
       Events:
         Any:
           Type: HttpApi
@@ -262,7 +265,17 @@ Resources:
         - Statement:
             - Effect: Allow
               Action: [s3:GetObject]
-              Resource: !Sub "${ScreenshotBucket.Arn}/*"
+              # NOT !Sub "${ScreenshotBucket.Arn}/*" -- GetAtt/Ref on the
+              # bucket resource here creates a real CloudFormation dependency
+              # edge (this role -> the bucket). The bucket's own S3 event
+              # notification below already depends on this function's
+              # permission existing first, so a GetAtt edge back the other
+              # way closes a cycle: bucket -> permission -> function -> role
+              # -> bucket. CloudFormation refuses to deploy that. Since
+              # BucketName is set explicitly (not auto-generated), the same
+              # ARN can be computed as a plain string with no dependency at
+              # all -- identical permission, no cycle.
+              Resource: !Sub "arn:${AWS::Partition}:s3:::${AWS::StackName}-screenshots-${AWS::AccountId}/*"
         - Statement:
             - Effect: Allow
               Action:
@@ -277,6 +290,10 @@ Resources:
         ScreenshotUploaded:
           Type: S3
           Properties:
+            # This Ref, unlike the ones above, is the correct direction of
+            # dependency: the bucket's notification config depends on this
+            # function (and its S3-invoke permission) existing, not the
+            # other way around.
             Bucket: !Ref ScreenshotBucket
             Events: s3:ObjectCreated:*
             Filter:
