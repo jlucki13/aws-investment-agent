@@ -5,7 +5,7 @@ Table layout (pk / sk):
     Position   USER#<id>      POS#<ticker>       shares, costBasis, status
     Price bar  TICKER#<sym>   BAR#<yyyy-mm-dd>   close, prevClose, changePct, ttl
     Brief      USER#<id>      BRIEF#<yyyy-mm-dd> text, totalValue, dayChangePct
-    Snapshot   USER#<id>      SNAP#<iso-ts>      s3Key, status, extractedJson
+    Snapshot   USER#<id>      SNAP#<uuid4 hex>   s3Key, status, extractedPositions
 
 Positions and briefs share the user partition, so the dashboard loads with one
 Query. Price bars partition by ticker and sort by date, which makes "last N bars
@@ -59,9 +59,8 @@ class Keys:
         return f"BRIEF#{d}"
 
     @staticmethod
-    def snapshot(ts: datetime | str) -> str:
-        t = ts.isoformat() if isinstance(ts, datetime) else ts
-        return f"SNAP#{t}"
+    def snapshot(snapshot_id: str) -> str:
+        return f"SNAP#{snapshot_id}"
 
 
 # ----------------------------------------------------------------------
@@ -201,3 +200,70 @@ def batch_put(items: Iterable[dict[str, Any]]) -> None:
     with table.batch_writer() as batch:
         for item in items:
             batch.put_item(Item=to_decimal(item))
+
+
+# ----------------------------------------------------------------------
+# Screenshot snapshots
+# ----------------------------------------------------------------------
+
+
+def put_snapshot(
+    user_id: str,
+    snapshot_id: str,
+    s3_key: str,
+    status: str = "PENDING_UPLOAD",
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc).isoformat()
+    item = to_decimal(
+        {
+            "pk": Keys.user(user_id),
+            "sk": Keys.snapshot(snapshot_id),
+            "snapshotId": snapshot_id,
+            "s3Key": s3_key,
+            "status": status,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+    )
+    get_table().put_item(Item=item)
+    return to_float(item)
+
+
+def update_snapshot(user_id: str, snapshot_id: str, **fields: Any) -> None:
+    """Patch arbitrary attributes (status, extractedPositions, error, ...)."""
+    fields["updatedAt"] = datetime.now(timezone.utc).isoformat()
+
+    names = {f"#{k}": k for k in fields}
+    values = to_decimal({f":{k}": v for k, v in fields.items()})
+    expr = "SET " + ", ".join(f"#{k} = :{k}" for k in fields)
+
+    get_table().update_item(
+        Key={"pk": Keys.user(user_id), "sk": Keys.snapshot(snapshot_id)},
+        UpdateExpression=expr,
+        ExpressionAttributeNames=names,
+        ExpressionAttributeValues=values,
+    )
+
+
+def get_snapshot(user_id: str, snapshot_id: str) -> dict[str, Any] | None:
+    resp = get_table().get_item(
+        Key={"pk": Keys.user(user_id), "sk": Keys.snapshot(snapshot_id)}
+    )
+    item = resp.get("Item")
+    return to_float(item) if item else None
+
+
+def read_snapshots(user_id: str, limit: int = 20) -> list[dict[str, Any]]:
+    """Most recent `limit` snapshots, newest first.
+
+    snapshot_id is a random uuid4, not a timestamp, so unlike bars and briefs
+    the sort key carries no ordering -- sort by createdAt instead of relying
+    on ScanIndexForward.
+    """
+    resp = get_table().query(
+        KeyConditionExpression=Key("pk").eq(Keys.user(user_id))
+        & Key("sk").begins_with("SNAP#")
+    )
+    items = [to_float(item) for item in resp.get("Items", [])]
+    items.sort(key=lambda i: i.get("createdAt", ""), reverse=True)
+    return items[:limit]

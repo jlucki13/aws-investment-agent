@@ -142,9 +142,19 @@ Resources:
       CodeUri: src/api/
       Handler: app.handler
       Description: Positions CRUD and brief retrieval
+      Environment:
+        Variables:
+          SCREENSHOT_BUCKET_NAME: !Ref ScreenshotBucket
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref PortfolioTable
+        - Statement:
+            - Effect: Allow
+              # Presigned URLs are only as good as the signing role's own
+              # permissions -- API Gateway's caller doesn't need S3 access,
+              # this function's execution role does.
+              Action: [s3:PutObject, s3:GetObject]
+              Resource: !Sub "${ScreenshotBucket.Arn}/*"
       Events:
         Any:
           Type: HttpApi
@@ -230,6 +240,55 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: !Sub "/aws/lambda/${AnalyzeFunction}"
+      RetentionInDays: 7
+
+  # ------------------------------------------------------------------
+  # Screenshot ingestion
+  # ------------------------------------------------------------------
+
+  ExtractScreenshotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: src/extract_screenshot/
+      Handler: app.handler
+      Description: Bedrock vision extraction of holdings from an uploaded screenshot
+      Timeout: 60
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref PortfolioTable
+        - Statement:
+            - Effect: Allow
+              Action: [s3:GetObject]
+              Resource: !Sub "${ScreenshotBucket.Arn}/*"
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+              # Same reasoning as AnalyzeFunction: inference profiles fan out
+              # across regions, so both the profile ARN and the underlying
+              # foundation models need to be grantable.
+              Resource:
+                - !Sub "arn:aws:bedrock:*::foundation-model/*"
+                - !Sub "arn:aws:bedrock:*:${AWS::AccountId}:inference-profile/*"
+      Events:
+        ScreenshotUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref ScreenshotBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+
+  ExtractScreenshotLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${ExtractScreenshotFunction}"
       RetentionInDays: 7
 
   # ------------------------------------------------------------------
