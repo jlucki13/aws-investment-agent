@@ -111,7 +111,12 @@ Resources:
     Type: AWS::Serverless::LayerVersion
     Properties:
       LayerName: !Sub "${AWS::StackName}-common"
-      ContentUri: layers/common/
+      # `sam build` (BuildMethod below) wraps everything under ContentUri in an
+      # extra python/ folder to match the Lambda layer convention. Point
+      # ContentUri at layers/common/python/ itself -- not its parent -- or the
+      # result is double-nested (python/python/portfolio_common) and Lambda,
+      # which only adds /opt/python to sys.path, can't import the package.
+      ContentUri: layers/common/python/
       CompatibleRuntimes: [python3.13]
       CompatibleArchitectures: [arm64]
     Metadata:
