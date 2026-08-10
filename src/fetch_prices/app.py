@@ -30,13 +30,17 @@ TTL_DAYS = int(os.environ.get("PRICE_TTL_DAYS", "400"))
 QUOTE_URL = "https://api.twelvedata.com/quote"
 TIMEOUT_SECONDS = 20
 
-# Twelve Data's free tier caps at 8 API credits/minute, and a batched /quote
-# call costs one credit per symbol -- confirmed directly from a live 429:
-# "9 API credits were used, with the current limit being 8." A portfolio
-# bigger than this must be split across multiple one-minute windows. This
-# runs once a day on a schedule, so the added latency costs nothing real.
-BATCH_SIZE = int(os.environ.get("TWELVEDATA_BATCH_SIZE", "8"))
-BATCH_PAUSE_SECONDS = 61
+# Twelve Data's free tier ("Basic 8" plan, confirmed on the account dashboard)
+# caps at 8 API credits/minute, and a batched /quote call costs one credit
+# per symbol. Deliberately NOT batching at exactly 8: sitting right on a rate
+# limit's boundary is fragile -- the client can't see the provider's own
+# window alignment, so a batch of exactly 8 can still get rejected on timing
+# that looks clean from here (observed live: a fresh 8-symbol batch, minutes
+# after the window should have reset, still came back "9 credits used, limit
+# 8"). Leaving real headroom below the ceiling, and a longer pause than the
+# bare minimum, costs nothing since this runs once a day on a schedule.
+BATCH_SIZE = int(os.environ.get("TWELVEDATA_BATCH_SIZE", "5"))
+BATCH_PAUSE_SECONDS = 65
 
 _api_key: str | None = None
 

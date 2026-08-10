@@ -65,8 +65,11 @@ def test_chunk_rejects_non_positive_size():
 # ----------------------------------------------------------------------
 
 
-def test_paced_fetch_splits_nine_symbols_into_two_chunks_with_one_pause():
-    """The exact scenario that failed live: 9 symbols against an 8/min cap."""
+def test_paced_fetch_splits_nine_symbols_with_a_pause_between_chunks():
+    """The exact scenario that failed live: a 9-symbol portfolio against
+    Twelve Data's Basic 8 plan. Derives expected chunk sizes from BATCH_SIZE
+    rather than hardcoding them, since that constant is deliberately kept
+    below the plan's 8/minute ceiling for margin and may be retuned."""
     symbols = [f"SYM{i}" for i in range(9)]
 
     with patch.object(fp_app, "fetch_quotes") as mock_fetch, patch.object(
@@ -77,12 +80,22 @@ def test_paced_fetch_splits_nine_symbols_into_two_chunks_with_one_pause():
         result = fp_app.fetch_quotes_paced(symbols)
 
     assert set(result.keys()) == set(symbols)
-    assert mock_fetch.call_count == 2
-    first_batch, second_batch = (c.args[0] for c in mock_fetch.call_args_list)
-    assert len(first_batch) == 8
-    assert len(second_batch) == 1
-    # Exactly one pause -- between the two chunks, never after the last one.
-    mock_sleep.assert_called_once_with(fp_app.BATCH_PAUSE_SECONDS)
+
+    expected_batches = fp_app._chunk(symbols, fp_app.BATCH_SIZE)
+    assert mock_fetch.call_count == len(expected_batches)
+    actual_batches = [c.args[0] for c in mock_fetch.call_args_list]
+    assert actual_batches == expected_batches
+
+    # One pause between each pair of chunks, never a trailing one after the last.
+    assert mock_sleep.call_count == len(expected_batches) - 1
+    assert all(
+        call.args == (fp_app.BATCH_PAUSE_SECONDS,)
+        for call in mock_sleep.call_args_list
+    )
+
+    # BATCH_SIZE must stay strictly under Twelve Data's confirmed 8/minute
+    # plan ceiling -- sitting exactly on it left zero margin and failed live.
+    assert fp_app.BATCH_SIZE < 8
 
 
 def test_paced_fetch_under_the_limit_never_pauses():
