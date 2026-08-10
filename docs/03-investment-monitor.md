@@ -150,19 +150,31 @@ It's also the most interesting screen in the app to build.
 | Provider | Free tier | Verdict |
 |---|---|---|
 | Alpha Vantage | **25 requests/day** | Too tight — 20 tickers exhausts it |
-| **Twelve Data** | **800 requests/day**, batch symbols per call, 50+ exchanges | **Use this** |
+| **Twelve Data** | **800 credits/day, 8 credits/minute**, batch symbols per call, 50+ exchanges | **Use this, with the caveat below** |
 | Finnhub | 60 requests/min, free WebSocket | Good alternative; better if you later want intraday |
 
 All free tiers delay quotes (15 min – 4 hrs). Irrelevant here — the job runs after close
 against daily bars.
 
-Twelve Data supports batching, so one call covers the whole portfolio:
+Twelve Data supports batching, so one call *can* cover the whole portfolio:
 
 ```
 GET https://api.twelvedata.com/quote?symbol=AAPL,MSFT,NVDA&apikey=...
 ```
 
-That's ~21 requests/month against an 800/day limit. Enormous headroom.
+That's ~21 requests/month against an 800/day limit — enormous headroom.
+
+**But the 800/day figure is not the binding limit; the 8/minute figure is.**
+A batched `/quote` call costs **one credit per symbol**, not one credit total
+— confirmed directly from a live 429 response: *"9 API credits were used,
+with the current limit being 8."* Any portfolio over 8 tickers blows the
+per-minute cap on a single batched call, every time, regardless of the daily
+pool being nowhere close to exhausted. `src/fetch_prices/app.py` handles this
+by splitting the symbol list into ≤8-symbol chunks and pausing ~61s between
+them — free to do since this runs once a day on a schedule, not on a
+user-facing request path. If you swap in a different provider, check for a
+per-minute limit separately from any daily one; "requests/day" alone
+undersells the real constraint.
 
 **Store the key in SSM Parameter Store as a `SecureString`** — free. Secrets Manager
 does the same job for $0.40/secret/month.

@@ -183,7 +183,16 @@ Resources:
       CodeUri: src/fetch_prices/
       Handler: app.handler
       Description: Pull daily closes from Twelve Data into the price history
-      Timeout: 60
+      # Twelve Data's free tier is 8 credits/minute and a batched quote call
+      # costs 1 credit/symbol, so portfolios over 8 tickers pause ~61s
+      # between chunks (see app.py). 600s covers roughly 80 tickers before
+      # this would need revisiting -- plenty for a personal portfolio. This
+      # runs once a day, so the extra runtime costs nothing real (still a
+      # trivial fraction of Lambda's always-free 400k GB-seconds/month).
+      # Needs DailyPipeline below to be a STANDARD state machine, not
+      # EXPRESS -- Express workflows have a hard 5-minute *total* execution
+      # ceiling that a single paced fetch can approach on its own.
+      Timeout: 600
       Environment:
         Variables:
           TWELVEDATA_PARAM_NAME: !Ref TwelveDataParamName
@@ -317,7 +326,13 @@ Resources:
   DailyPipeline:
     Type: AWS::Serverless::StateMachine
     Properties:
-      Type: EXPRESS
+      # STANDARD, not EXPRESS: Express workflows cap total execution at 5
+      # minutes, and FetchPrices alone can approach that once a portfolio's
+      # ticker count needs multiple Twelve Data rate-limit pauses. Standard
+      # has no such ceiling. Billing is per state transition instead of
+      # duration, but at 2 transitions/run x ~21 trading days/month that's
+      # ~42/month against an always-free allowance of 4,000 -- still $0.
+      Type: STANDARD
       Definition:
         StartAt: FetchPrices
         States:

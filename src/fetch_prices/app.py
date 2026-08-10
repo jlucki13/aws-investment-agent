@@ -10,6 +10,7 @@ quotes as input, so each function can be invoked and debugged on its own:
 import json
 import logging
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -28,6 +29,14 @@ TTL_DAYS = int(os.environ.get("PRICE_TTL_DAYS", "400"))
 
 QUOTE_URL = "https://api.twelvedata.com/quote"
 TIMEOUT_SECONDS = 20
+
+# Twelve Data's free tier caps at 8 API credits/minute, and a batched /quote
+# call costs one credit per symbol -- confirmed directly from a live 429:
+# "9 API credits were used, with the current limit being 8." A portfolio
+# bigger than this must be split across multiple one-minute windows. This
+# runs once a day on a schedule, so the added latency costs nothing real.
+BATCH_SIZE = int(os.environ.get("TWELVEDATA_BATCH_SIZE", "8"))
+BATCH_PAUSE_SECONDS = 61
 
 _api_key: str | None = None
 
@@ -82,6 +91,33 @@ def fetch_quotes(symbols: list[str]) -> dict[str, dict]:
     return payload
 
 
+def _chunk(items: list[str], size: int) -> list[list[str]]:
+    """Split into groups of at most `size`, preserving order. Pure -- no I/O."""
+    if size <= 0:
+        raise ValueError("size must be positive")
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+def fetch_quotes_paced(symbols: list[str]) -> dict[str, dict]:
+    """fetch_quotes across as many one-minute windows as the symbol count needs."""
+    batches = _chunk(symbols, BATCH_SIZE)
+    quotes: dict[str, dict] = {}
+
+    for i, batch in enumerate(batches):
+        quotes.update(fetch_quotes(batch))
+        is_last = i == len(batches) - 1
+        if not is_last:
+            log.info(
+                "fetched %d/%d symbols; pausing %ds for Twelve Data's per-minute limit",
+                (i + 1) * BATCH_SIZE,
+                len(symbols),
+                BATCH_PAUSE_SECONDS,
+            )
+            time.sleep(BATCH_PAUSE_SECONDS)
+
+    return quotes
+
+
 def _to_float(value) -> float | None:
     if value in (None, "", "None"):
         return None
@@ -100,7 +136,7 @@ def handler(_event, _context):
         return {"fetched": 0, "symbols": [], "errors": []}
 
     log.info("fetching quotes for %d symbols: %s", len(symbols), symbols)
-    quotes = fetch_quotes(symbols)
+    quotes = fetch_quotes_paced(symbols)
 
     written, errors = 0, []
 

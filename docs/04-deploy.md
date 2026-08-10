@@ -12,8 +12,10 @@ Everything below is `us-east-1`.
 
 ### 1. Twelve Data API key
 
-Sign up free at <https://twelvedata.com/pricing> (800 requests/day). Then store the key
-in Parameter Store — **free**, unlike Secrets Manager at $0.40/secret/month:
+Sign up free at <https://twelvedata.com/pricing> (800 credits/day — but see the note
+below, the real constraint for portfolios over 8 tickers is **8 credits/minute**, not
+the daily figure). Then store the key in Parameter Store — **free**, unlike Secrets
+Manager at $0.40/secret/month:
 
 ```bash
 aws ssm put-parameter \
@@ -112,8 +114,16 @@ sam remote invoke FetchPricesFunction --stack-name portfolio-monitor
 ```
 
 Expect `{"fetched": 2, "symbols": ["AAPL","MSFT"], "errors": []}`. A non-empty `errors`
-array usually means a bad API key or a rate limit — both come back as HTTP 200 with an
-error body, which is why the fetcher checks for it explicitly.
+array usually means a bad API key (Twelve Data returns that as HTTP 200 with an error
+body, which the fetcher checks for explicitly) or a bad/delisted symbol.
+
+**A rate limit is different: it surfaces as a genuine HTTP 429**, not a 200. Twelve
+Data's free tier caps at 8 API credits/minute, and a batched `/quote` call costs one
+credit per symbol — so once your portfolio passes 8 tickers, `sam remote invoke
+FetchPricesFunction` (and the real scheduled run) automatically splits the fetch into
+≤8-symbol chunks with a ~61s pause between them. That means a run over 8 tickers takes
+noticeably longer than one under 8 — expected, not a hang. If you invoke manually and
+it seems to sit there for a minute, that's the pause, not a stuck function.
 
 ### Analysis + brief
 
