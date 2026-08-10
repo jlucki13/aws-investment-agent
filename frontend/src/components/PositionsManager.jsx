@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { getPositions, upsertPosition, deletePosition } from "../api.js";
+import { getPositions, getPrices, upsertPosition, deletePosition } from "../api.js";
 
 const emptyForm = { ticker: "", shares: "", costBasis: "" };
 
 export default function PositionsManager() {
   const [positions, setPositions] = useState([]);
+  const [prices, setPrices] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [form, setForm] = useState(emptyForm);
@@ -15,8 +16,16 @@ export default function PositionsManager() {
   function load() {
     setLoading(true);
     setError(null);
-    return getPositions()
-      .then((data) => setPositions(data.positions || []))
+    return Promise.all([
+      getPositions(),
+      // Prices are a nice-to-have column -- don't let a failure here block
+      // the positions table itself from loading.
+      getPrices().catch(() => ({ prices: {} })),
+    ])
+      .then(([positionsRes, pricesRes]) => {
+        setPositions(positionsRes.positions || []);
+        setPrices(pricesRes.prices || {});
+      })
       .catch((err) => setError(err.message || "Failed to load positions."))
       .finally(() => setLoading(false));
   }
@@ -115,17 +124,40 @@ export default function PositionsManager() {
               <th>Ticker</th>
               <th>Shares</th>
               <th>Cost basis</th>
+              <th>Current price</th>
+              <th>Market value</th>
               <th>Status</th>
               <th>Updated</th>
               <th></th>
             </tr>
           </thead>
           <tbody>
-            {positions.map((pos) => (
+            {positions.map((pos) => {
+              const price = prices[pos.ticker];
+              const marketValue =
+                price?.close != null ? pos.shares * price.close : null;
+              return (
               <tr key={pos.ticker}>
                 <td>{pos.ticker}</td>
                 <td>{pos.shares}</td>
-                <td>${Number(pos.costBasis).toFixed(2)}</td>
+                <td>
+                  {pos.costBasis != null
+                    ? `$${Number(pos.costBasis).toFixed(2)}`
+                    : <span className="muted">not set</span>}
+                </td>
+                <td>
+                  {price?.close != null
+                    ? `$${Number(price.close).toFixed(2)}`
+                    : "—"}
+                </td>
+                <td>
+                  {marketValue != null
+                    ? `$${marketValue.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}`
+                    : "—"}
+                </td>
                 <td>
                   <span
                     className={
@@ -150,7 +182,8 @@ export default function PositionsManager() {
                   </button>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

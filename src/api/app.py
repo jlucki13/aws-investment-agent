@@ -90,6 +90,28 @@ def delete_position(_event, params) -> Any:
     return {"deleted": params["ticker"].upper()}
 
 
+def get_prices(_event, _params) -> Any:
+    """Latest fetched close per held ticker.
+
+    Reads straight from the price-bar history FetchPricesFunction already
+    writes daily, rather than the brief's stored weights -- the brief is a
+    snapshot from whenever the last daily job ran, so joining against it can
+    show stale numbers right after you add/remove a position. This queries
+    fresh on every page load instead.
+    """
+    tickers = sorted({p["ticker"] for p in db.read_positions(USER_ID, confirmed_only=False)})
+    prices = {}
+    for ticker in tickers:
+        bar = db.latest_close(ticker)
+        if bar:
+            prices[ticker] = {
+                "close": bar.get("close"),
+                "date": bar.get("date"),
+                "changePct": bar.get("changePct"),
+            }
+    return {"prices": prices}
+
+
 def list_briefs(_event, _params) -> Any:
     return {"briefs": db.read_briefs(USER_ID, limit=30)}
 
@@ -199,6 +221,7 @@ ROUTES: list[Route] = [
     ("DELETE", re.compile(r"^/positions/(?P<ticker>[A-Za-z.\-]{1,10})/?$"), delete_position),
     ("GET", re.compile(r"^/briefs/latest/?$"), latest_brief),
     ("GET", re.compile(r"^/briefs/?$"), list_briefs),
+    ("GET", re.compile(r"^/prices/?$"), get_prices),
     ("POST", re.compile(r"^/snapshots/upload-url/?$"), request_upload_url),
     ("GET", re.compile(r"^/snapshots/?$"), list_snapshots),
     ("GET", re.compile(r"^/snapshots/(?P<id>[0-9a-f]{32})/?$"), get_snapshot),

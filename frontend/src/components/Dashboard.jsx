@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { getLatestBrief, getPositions, ApiError } from "../api.js";
+import { getLatestBrief, getPositions, getPrices, ApiError } from "../api.js";
 
 export default function Dashboard() {
   const [brief, setBrief] = useState(null);
   const [noBrief, setNoBrief] = useState(false);
   const [positions, setPositions] = useState([]);
+  const [prices, setPrices] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -16,10 +17,12 @@ export default function Dashboard() {
       setError(null);
       setNoBrief(false);
       try {
-        const [briefResult, positionsResult] = await Promise.allSettled([
-          getLatestBrief(),
-          getPositions(),
-        ]);
+        const [briefResult, positionsResult, pricesResult] =
+          await Promise.allSettled([
+            getLatestBrief(),
+            getPositions(),
+            getPrices(),
+          ]);
 
         if (cancelled) return;
 
@@ -38,6 +41,12 @@ export default function Dashboard() {
           setPositions(positionsResult.value.positions || []);
         } else {
           throw positionsResult.reason;
+        }
+
+        // Prices are a nice-to-have column, not core dashboard data -- a
+        // failure here shouldn't block the rest of the page from rendering.
+        if (pricesResult.status === "fulfilled") {
+          setPrices(pricesResult.value.prices || {});
         }
       } catch (err) {
         if (!cancelled) setError(err.message || "Failed to load dashboard.");
@@ -139,34 +148,77 @@ export default function Dashboard() {
                 <th>Ticker</th>
                 <th>Shares</th>
                 <th>Cost basis</th>
+                <th>Current price</th>
+                <th>Market value</th>
                 <th>Weight</th>
                 <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              {positions.map((pos) => (
-                <tr key={pos.ticker}>
-                  <td>{pos.ticker}</td>
-                  <td>{pos.shares}</td>
-                  <td>${Number(pos.costBasis).toFixed(2)}</td>
-                  <td>
-                    {weightByTicker.has(pos.ticker)
-                      ? `${weightByTicker.get(pos.ticker).toFixed(1)}%`
-                      : "—"}
-                  </td>
-                  <td>
-                    <span
-                      className={
-                        pos.status === "CONFIRMED"
-                          ? "badge badge-confirmed"
-                          : "badge badge-pending"
-                      }
-                    >
-                      {pos.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {positions.map((pos) => {
+                const price = prices[pos.ticker];
+                const marketValue =
+                  price?.close != null ? pos.shares * price.close : null;
+                return (
+                  <tr key={pos.ticker}>
+                    <td>{pos.ticker}</td>
+                    <td>{pos.shares}</td>
+                    <td>
+                      {pos.costBasis != null
+                        ? `$${Number(pos.costBasis).toFixed(2)}`
+                        : "—"}
+                    </td>
+                    <td>
+                      {price?.close != null ? (
+                        <>
+                          ${Number(price.close).toFixed(2)}
+                          {typeof price.changePct === "number" && (
+                            <span
+                              className={
+                                price.changePct > 0
+                                  ? "stat-subvalue positive"
+                                  : price.changePct < 0
+                                  ? "stat-subvalue negative"
+                                  : "stat-subvalue"
+                              }
+                            >
+                              {" "}
+                              ({price.changePct > 0 ? "+" : ""}
+                              {price.changePct.toFixed(2)}%)
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td>
+                      {marketValue != null
+                        ? `$${marketValue.toLocaleString(undefined, {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}`
+                        : "—"}
+                    </td>
+                    <td>
+                      {weightByTicker.has(pos.ticker)
+                        ? `${weightByTicker.get(pos.ticker).toFixed(1)}%`
+                        : "—"}
+                    </td>
+                    <td>
+                      <span
+                        className={
+                          pos.status === "CONFIRMED"
+                            ? "badge badge-confirmed"
+                            : "badge badge-pending"
+                        }
+                      >
+                        {pos.status}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}

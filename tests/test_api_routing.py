@@ -95,3 +95,31 @@ def test_snapshot_confirm_and_get_do_not_collide():
     assert body == {"confirmed": 1, "snapshotId": snap_id}
     mock_put.assert_called_once_with("test-user", "AAPL", 5.0, 100.0, "CONFIRMED")
     mock_update.assert_called_once_with("test-user", snap_id, status="CONFIRMED")
+
+
+def test_get_prices_joins_positions_with_latest_bar():
+    with patch.object(api_app.db, "read_positions") as mock_positions, patch.object(
+        api_app.db, "latest_close"
+    ) as mock_latest:
+        mock_positions.return_value = [
+            {"ticker": "AAPL", "shares": 10.0, "costBasis": 100.0},
+            {"ticker": "MSFT", "shares": 5.0, "costBasis": 200.0},
+        ]
+
+        def fake_latest(ticker):
+            if ticker == "AAPL":
+                return {"close": 228.5, "date": "2026-08-07", "changePct": 1.2}
+            return None  # MSFT: never fetched yet
+
+        mock_latest.side_effect = fake_latest
+
+        resp = api_app.handler(_event("GET", "/prices"), None)
+
+    assert resp["statusCode"] == 200
+    body = json.loads(resp["body"])
+    assert body == {
+        "prices": {
+            "AAPL": {"close": 228.5, "date": "2026-08-07", "changePct": 1.2}
+        }
+    }
+    mock_positions.assert_called_once_with("test-user", confirmed_only=False)

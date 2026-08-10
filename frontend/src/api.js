@@ -65,6 +65,15 @@ export function getLatestBrief() {
   return request("/briefs/latest");
 }
 
+// ---- Prices ----
+
+// { prices: { AAPL: { close, date, changePct }, ... } } -- only tickers with
+// at least one fetched bar are present; a brand-new position the daily job
+// hasn't priced yet is simply absent from the map.
+export function getPrices() {
+  return request("/prices");
+}
+
 // ---- Snapshots ----
 
 export function createUploadUrl(filename, contentType) {
