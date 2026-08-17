@@ -9,8 +9,14 @@ outgoing URL proved the request genuinely contained only 5 symbols, and a
 single-symbol call made directly against the API (outside this Lambda)
 succeeded cleanly. Conclusion: the batched /quote endpoint doesn't cost what
 its docs say on this plan -- any batch size above 1 hits roughly the same
-wall. fetch_quotes_paced now fetches one symbol per request, paced, which is
-the only shape that's actually been proven to work.
+wall. fetch_quotes_paced fetches one symbol per request, paced.
+
+Even that wasn't fully reliable: a live run with symbols spaced 12s apart
+had its first four single-symbol calls succeed and its fifth get a 429 --
+not obviously explained by the documented 8-credits/minute figure either.
+Rather than continue guessing a pace that's "safe," fetch_quotes_paced now
+catches a 429 and retries just that symbol after a long recovery pause,
+bounded by MAX_RETRIES across the whole run.
 """
 
 import importlib.util
@@ -99,3 +105,65 @@ def test_request_pause_leaves_real_margin_under_the_confirmed_plan_ceiling():
     that failed live twice already."""
     max_requests_per_minute = 60 / fp_app.REQUEST_PAUSE_SECONDS
     assert max_requests_per_minute < 8
+
+
+# ----------------------------------------------------------------------
+# 429 recovery
+# ----------------------------------------------------------------------
+
+
+def test_429_on_one_symbol_retries_and_recovers():
+    """The exact live scenario: a mid-run 429 on symbol 3 of 5. It must
+    retry only that symbol (not restart from the beginning, not skip it)
+    and continue once it succeeds."""
+    calls = []
+
+    def flaky_fetch(batch):
+        calls.append(batch[0])
+        if batch[0] == "C" and calls.count("C") == 1:
+            raise RuntimeError("Twelve Data HTTP 429: rate limited")
+        return {batch[0]: {"close": 1.0}}
+
+    with patch.object(
+        fp_app, "fetch_quotes", side_effect=flaky_fetch
+    ), patch.object(fp_app.time, "sleep") as mock_sleep:
+        result = fp_app.fetch_quotes_paced(["A", "B", "C", "D", "E"])
+
+    assert set(result.keys()) == {"A", "B", "C", "D", "E"}
+    # C was attempted twice: the failure, then the successful retry.
+    assert calls.count("C") == 2
+    assert calls == ["A", "B", "C", "C", "D", "E"]
+    # One recovery pause (RETRY_WAIT_SECONDS) plus the normal per-request
+    # pauses in between every other pair of symbols.
+    recovery_pauses = [
+        c for c in mock_sleep.call_args_list if c.args == (fp_app.RETRY_WAIT_SECONDS,)
+    ]
+    assert len(recovery_pauses) == 1
+
+
+def test_429_exhausting_retries_propagates():
+    """A 429 that never clears must eventually raise, not retry forever --
+    a persistently bad key or a real outage shouldn't hang the function
+    until its timeout."""
+    with patch.object(
+        fp_app, "fetch_quotes", side_effect=RuntimeError("Twelve Data HTTP 429: x")
+    ), patch.object(fp_app.time, "sleep"):
+        import pytest
+
+        with pytest.raises(RuntimeError, match="429"):
+            fp_app.fetch_quotes_paced(["A"])
+
+
+def test_non_429_error_is_not_retried():
+    """A different failure (bad symbol, network error, etc.) must propagate
+    immediately -- retrying is specifically a rate-limit recovery, not a
+    general-purpose retry-everything policy."""
+    with patch.object(
+        fp_app, "fetch_quotes", side_effect=RuntimeError("Twelve Data unreachable: timeout")
+    ), patch.object(fp_app.time, "sleep") as mock_sleep:
+        import pytest
+
+        with pytest.raises(RuntimeError, match="unreachable"):
+            fp_app.fetch_quotes_paced(["A"])
+
+    mock_sleep.assert_not_called()

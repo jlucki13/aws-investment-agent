@@ -100,15 +100,46 @@ def fetch_quotes(symbols: list[str]) -> dict[str, dict]:
     return payload
 
 
+RETRY_WAIT_SECONDS = int(os.environ.get("TWELVEDATA_RETRY_WAIT_SECONDS", "65"))
+MAX_RETRIES = int(os.environ.get("TWELVEDATA_MAX_RETRIES", "2"))
+
+
 def fetch_quotes_paced(symbols: list[str]) -> dict[str, dict]:
     """One symbol per request, paced -- see the comment above REQUEST_PAUSE_SECONDS
-    for why batching multiple symbols into one call isn't used here."""
+    for why batching isn't used here. Even lone single-symbol requests have still
+    hit a 429 partway through a run in practice, for reasons this project hasn't
+    been able to fully pin down against Twelve Data's real throttling behavior
+    (four single-symbol calls, each 12s apart, succeeded before a fifth was
+    rejected -- not obviously explained by the documented 8-credits/minute
+    figure). Rather than continuing to guess a "safe" pace, a 429 here triggers
+    a long recovery pause and a retry of just that one symbol, bounded by
+    MAX_RETRIES across the whole run (not per-symbol) so a persistently bad
+    connection can't run the function past its timeout.
+    """
     quotes: dict[str, dict] = {}
+    retries_used = 0
 
-    for i, symbol in enumerate(symbols):
-        quotes.update(fetch_quotes([symbol]))
-        is_last = i == len(symbols) - 1
-        if not is_last:
+    i = 0
+    while i < len(symbols):
+        symbol = symbols[i]
+        try:
+            quotes.update(fetch_quotes([symbol]))
+        except RuntimeError as exc:
+            if "429" in str(exc) and retries_used < MAX_RETRIES:
+                retries_used += 1
+                log.warning(
+                    "rate limited on %s (recovery %d/%d) -- pausing %ds before retry",
+                    symbol,
+                    retries_used,
+                    MAX_RETRIES,
+                    RETRY_WAIT_SECONDS,
+                )
+                time.sleep(RETRY_WAIT_SECONDS)
+                continue  # retry the same symbol; don't advance
+            raise
+
+        i += 1
+        if i < len(symbols):
             time.sleep(REQUEST_PAUSE_SECONDS)
 
     return quotes
