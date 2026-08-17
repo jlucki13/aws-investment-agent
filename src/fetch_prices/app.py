@@ -75,6 +75,18 @@ def fetch_quotes(symbols: list[str]) -> dict[str, dict]:
     )
     url = f"{QUOTE_URL}?{params}"
 
+    # TEMP diagnostic: log exactly what's being sent, key redacted. Repeated
+    # 429s claiming "9 credits used" persisted across three deployed fixes
+    # that all checked out locally (chunking logic, plan limit, build cache,
+    # exact traceback line numbers) -- logging the literal request removes
+    # all ambiguity about what's actually going out over the wire.
+    log.info(
+        "fetch_quotes: %d symbols=%s url=%s",
+        len(symbols),
+        symbols,
+        url.split("apikey=")[0] + "apikey=<redacted>",
+    )
+
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as resp:
             payload = json.loads(resp.read())
