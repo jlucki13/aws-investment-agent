@@ -1,6 +1,13 @@
 import { useEffect, useState } from "react";
 import { getLatestBrief, getPositions, getPrices, ApiError } from "../api.js";
 import BriefText from "./BriefText.jsx";
+import {
+  changeArrow,
+  changeClass,
+  formatSignedPct,
+  formatSignedUsd,
+  formatUsd,
+} from "../format.js";
 
 export default function Dashboard() {
   const [brief, setBrief] = useState(null);
@@ -83,150 +90,160 @@ export default function Dashboard() {
     (brief?.weights || []).map((w) => [w.ticker, w.weight_pct])
   );
 
-  const dayChangeClass =
-    brief?.dayChangePct > 0 ? "positive" : brief?.dayChangePct < 0 ? "negative" : "";
+  const dayChangeCls = changeClass(brief?.dayChangePct);
 
   return (
     <div className="dashboard">
-      <section className="brief-card">
-        <BriefText
-          text={brief.text}
-          paragraphClassName="brief-text"
-          listClassName="brief-bullets"
-          itemClassName="brief-text"
-        />
-        <div className="brief-stats">
-          <div className="stat">
-            <span className="stat-label">Total value</span>
-            <span className="stat-value">
-              ${brief.totalValue?.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-            </span>
-          </div>
-          <div className="stat">
-            <span className="stat-label">Day change</span>
-            <span className={`stat-value ${dayChangeClass}`}>
-              {brief.dayChangePct > 0 ? "+" : ""}
-              {brief.dayChangePct?.toFixed(2)}%
-              {typeof brief.dayChangeValue === "number" && (
-                <span className="stat-subvalue">
-                  {" "}
-                  ({brief.dayChangeValue >= 0 ? "+" : ""}$
-                  {brief.dayChangeValue.toFixed(2)})
+      <section className="quote-panel">
+        <div className="quote-header">
+          <div className="quote-price-block">
+            <span className="quote-label">Total Portfolio Value</span>
+            <div className="quote-price-row">
+              <span className="quote-price">{formatUsd(brief.totalValue)}</span>
+              <span className={`quote-change ${dayChangeCls}`}>
+                <span className={`arrow ${dayChangeCls}`}>
+                  {changeArrow(brief.dayChangePct)}
                 </span>
-              )}
-            </span>
+                {formatSignedUsd(brief.dayChangeValue)} (
+                {formatSignedPct(brief.dayChangePct)})
+              </span>
+            </div>
+            <span className="quote-timestamp">As of {brief.date}</span>
           </div>
-          <div className="stat">
-            <span className="stat-label">Unrealized</span>
-            <span className={`stat-value ${brief.unrealizedPct >= 0 ? "positive" : "negative"}`}>
-              {brief.unrealizedPct > 0 ? "+" : ""}
-              {brief.unrealizedPct?.toFixed(2)}%
-            </span>
+
+          <div className="quote-stats-strip">
+            <div className="quote-stat">
+              <span className="quote-stat-label">Unrealized</span>
+              <span className={`quote-stat-value ${changeClass(brief.unrealizedPct)}`}>
+                {formatSignedPct(brief.unrealizedPct)}
+              </span>
+            </div>
+            <div className="quote-stat">
+              <span className="quote-stat-label">Effective Holdings</span>
+              <span className="quote-stat-value">
+                {brief.effectiveHoldings?.toFixed(2)}
+              </span>
+            </div>
+            <div className="quote-stat">
+              <span className="quote-stat-label">Positions</span>
+              <span className="quote-stat-value">{brief.positionCount}</span>
+            </div>
           </div>
         </div>
-        <div className="diversification-callout">
-          <div className="diversification-number">
-            {brief.effectiveHoldings?.toFixed(2)}
-          </div>
-          <div className="diversification-copy">
-            <strong>Effective holdings</strong> — {brief.positionCount} position
-            {brief.positionCount === 1 ? "" : "s"}, but concentration means it
-            behaves like ~{brief.effectiveHoldings?.toFixed(1)} equally-weighted
-            positions. Lower means more concentrated risk.
-          </div>
-        </div>
+
         {brief.missingQuotes && brief.missingQuotes.length > 0 && (
           <p className="warning">
             Missing quotes for: {brief.missingQuotes.join(", ")}
           </p>
         )}
-        <p className="muted small">As of {brief.date}</p>
+
+        <div className="brief-narrative">
+          <h3>Daily Brief</h3>
+          <BriefText
+            text={brief.text}
+            paragraphClassName="brief-text"
+            listClassName="brief-bullets"
+            itemClassName="brief-text"
+          />
+        </div>
+
+        <p className="diversification-note">
+          <strong>Effective holdings</strong> — {brief.positionCount} position
+          {brief.positionCount === 1 ? "" : "s"}, but concentration means it
+          behaves like ~{brief.effectiveHoldings?.toFixed(1)} equally-weighted
+          positions. Lower means more concentrated risk.
+        </p>
       </section>
 
-      <section>
-        <h2>Positions</h2>
+      <section className="positions-section">
+        <div className="section-heading">
+          <h2>Positions</h2>
+          {positions.length > 0 && (
+            <span className="muted small">
+              {positions.length} holding{positions.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
         {positions.length === 0 ? (
           <p className="muted">No positions yet.</p>
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Shares</th>
-                <th>Cost basis</th>
-                <th>Current price</th>
-                <th>Market value</th>
-                <th>Weight</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((pos) => {
-                const price = prices[pos.ticker];
-                const marketValue =
-                  price?.close != null ? pos.shares * price.close : null;
-                return (
-                  <tr key={pos.ticker}>
-                    <td>{pos.ticker}</td>
-                    <td>{pos.shares}</td>
-                    <td>
-                      {pos.costBasis != null
-                        ? `$${Number(pos.costBasis).toFixed(2)}`
-                        : "—"}
-                    </td>
-                    <td>
-                      {price?.close != null ? (
-                        <>
-                          ${Number(price.close).toFixed(2)}
-                          {typeof price.changePct === "number" && (
-                            <span
-                              className={
-                                price.changePct > 0
-                                  ? "stat-subvalue positive"
-                                  : price.changePct < 0
-                                  ? "stat-subvalue negative"
-                                  : "stat-subvalue"
-                              }
-                            >
-                              {" "}
-                              ({price.changePct > 0 ? "+" : ""}
-                              {price.changePct.toFixed(2)}%)
-                            </span>
-                          )}
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      {marketValue != null
-                        ? `$${marketValue.toLocaleString(undefined, {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}`
-                        : "—"}
-                    </td>
-                    <td>
-                      {weightByTicker.has(pos.ticker)
-                        ? `${weightByTicker.get(pos.ticker).toFixed(1)}%`
-                        : "—"}
-                    </td>
-                    <td>
-                      <span
-                        className={
-                          pos.status === "CONFIRMED"
-                            ? "badge badge-confirmed"
-                            : "badge badge-pending"
-                        }
-                      >
-                        {pos.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="positions-table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th className="num">Shares</th>
+                  <th className="num">Cost Basis</th>
+                  <th className="num">Price</th>
+                  <th className="num">Mkt Value</th>
+                  <th className="num">Weight</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {positions.map((pos) => {
+                  const price = prices[pos.ticker];
+                  const marketValue =
+                    price?.close != null ? pos.shares * price.close : null;
+                  return (
+                    <tr key={pos.ticker}>
+                      <td className="ticker-cell">{pos.ticker}</td>
+                      <td className="num">{pos.shares}</td>
+                      <td className="num">
+                        {pos.costBasis != null
+                          ? formatUsd(Number(pos.costBasis))
+                          : "—"}
+                      </td>
+                      <td className="num">
+                        {price?.close != null ? (
+                          <span className="price-cell">
+                            <span>{formatUsd(Number(price.close))}</span>
+                            {typeof price.changePct === "number" && (
+                              <span
+                                className={`change-inline ${changeClass(
+                                  price.changePct
+                                )}`}
+                              >
+                                <span
+                                  className={`arrow ${changeClass(
+                                    price.changePct
+                                  )}`}
+                                >
+                                  {changeArrow(price.changePct)}
+                                </span>
+                                {formatSignedPct(price.changePct)}
+                              </span>
+                            )}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="num">
+                        {marketValue != null ? formatUsd(marketValue) : "—"}
+                      </td>
+                      <td className="num">
+                        {weightByTicker.has(pos.ticker)
+                          ? `${weightByTicker.get(pos.ticker).toFixed(1)}%`
+                          : "—"}
+                      </td>
+                      <td>
+                        <span
+                          className={
+                            pos.status === "CONFIRMED"
+                              ? "badge badge-confirmed"
+                              : "badge badge-pending"
+                          }
+                        >
+                          {pos.status}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
     </div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getBriefs } from "../api.js";
 import BriefText from "./BriefText.jsx";
+import { changeArrow, changeClass, formatSignedPct } from "../format.js";
 
 export default function BriefHistory() {
   const [briefs, setBriefs] = useState([]);
@@ -35,20 +36,16 @@ export default function BriefHistory() {
       <h2>Brief History</h2>
       <ul className="brief-list">
         {briefs.map((brief) => {
-          const changeClass =
-            brief.dayChangePct > 0
-              ? "positive"
-              : brief.dayChangePct < 0
-              ? "negative"
-              : "";
+          const cls = changeClass(brief.dayChangePct);
           return (
             <li key={brief.sk || brief.date} className="brief-list-item">
               <div className="brief-list-header">
                 <span className="brief-date">{brief.date}</span>
-                <span className={`brief-change ${changeClass}`}>
-                  {typeof brief.dayChangePct === "number"
-                    ? `${brief.dayChangePct > 0 ? "+" : ""}${brief.dayChangePct.toFixed(2)}%`
-                    : "—"}
+                <span className={`brief-change ${cls}`}>
+                  <span className={`arrow ${cls}`}>
+                    {changeArrow(brief.dayChangePct)}
+                  </span>
+                  {formatSignedPct(brief.dayChangePct)}
                 </span>
               </div>
               <BriefText

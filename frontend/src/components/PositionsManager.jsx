@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getPositions, getPrices, upsertPosition, deletePosition } from "../api.js";
+import { formatUsd } from "../format.js";
 
 const emptyForm = { ticker: "", shares: "", costBasis: "" };
 
@@ -82,7 +83,14 @@ export default function PositionsManager() {
 
   return (
     <div className="positions-manager">
-      <h2>Positions</h2>
+      <div className="section-heading">
+        <h2>Positions</h2>
+        {positions.length > 0 && (
+          <span className="muted small">
+            {positions.length} holding{positions.length === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
 
       <form className="add-position-form" onSubmit={handleSubmit}>
         <input
@@ -118,74 +126,69 @@ export default function PositionsManager() {
       ) : positions.length === 0 ? (
         <p className="muted">No positions yet — add one above.</p>
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Ticker</th>
-              <th>Shares</th>
-              <th>Cost basis</th>
-              <th>Current price</th>
-              <th>Market value</th>
-              <th>Status</th>
-              <th>Updated</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {positions.map((pos) => {
-              const price = prices[pos.ticker];
-              const marketValue =
-                price?.close != null ? pos.shares * price.close : null;
-              return (
-              <tr key={pos.ticker}>
-                <td>{pos.ticker}</td>
-                <td>{pos.shares}</td>
-                <td>
-                  {pos.costBasis != null
-                    ? `$${Number(pos.costBasis).toFixed(2)}`
-                    : <span className="muted">not set</span>}
-                </td>
-                <td>
-                  {price?.close != null
-                    ? `$${Number(price.close).toFixed(2)}`
-                    : "—"}
-                </td>
-                <td>
-                  {marketValue != null
-                    ? `$${marketValue.toLocaleString(undefined, {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}`
-                    : "—"}
-                </td>
-                <td>
-                  <span
-                    className={
-                      pos.status === "CONFIRMED"
-                        ? "badge badge-confirmed"
-                        : "badge badge-pending"
-                    }
-                  >
-                    {pos.status}
-                  </span>
-                </td>
-                <td className="muted small">
-                  {pos.updatedAt ? new Date(pos.updatedAt).toLocaleString() : "—"}
-                </td>
-                <td>
-                  <button
-                    className="danger-link"
-                    onClick={() => handleDelete(pos.ticker)}
-                    disabled={deletingTicker === pos.ticker}
-                  >
-                    {deletingTicker === pos.ticker ? "Deleting…" : "Delete"}
-                  </button>
-                </td>
+        <div className="positions-table-wrap">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Ticker</th>
+                <th className="num">Shares</th>
+                <th className="num">Cost Basis</th>
+                <th className="num">Price</th>
+                <th className="num">Mkt Value</th>
+                <th>Status</th>
+                <th>Updated</th>
+                <th></th>
               </tr>
-              );
-            })}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {positions.map((pos) => {
+                const price = prices[pos.ticker];
+                const marketValue =
+                  price?.close != null ? pos.shares * price.close : null;
+                return (
+                <tr key={pos.ticker}>
+                  <td className="ticker-cell">{pos.ticker}</td>
+                  <td className="num">{pos.shares}</td>
+                  <td className="num">
+                    {pos.costBasis != null
+                      ? formatUsd(Number(pos.costBasis))
+                      : <span className="muted">not set</span>}
+                  </td>
+                  <td className="num">
+                    {price?.close != null ? formatUsd(Number(price.close)) : "—"}
+                  </td>
+                  <td className="num">
+                    {marketValue != null ? formatUsd(marketValue) : "—"}
+                  </td>
+                  <td>
+                    <span
+                      className={
+                        pos.status === "CONFIRMED"
+                          ? "badge badge-confirmed"
+                          : "badge badge-pending"
+                      }
+                    >
+                      {pos.status}
+                    </span>
+                  </td>
+                  <td className="muted small">
+                    {pos.updatedAt ? new Date(pos.updatedAt).toLocaleString() : "—"}
+                  </td>
+                  <td>
+                    <button
+                      className="danger-link"
+                      onClick={() => handleDelete(pos.ticker)}
+                      disabled={deletingTicker === pos.ticker}
+                    >
+                      {deletingTicker === pos.ticker ? "Deleting…" : "Delete"}
+                    </button>
+                  </td>
+                </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

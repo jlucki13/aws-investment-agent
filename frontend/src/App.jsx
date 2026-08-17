@@ -29,35 +29,42 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app-shell">
       <header className="app-header">
-        <h1>Portfolio Monitor</h1>
-        <nav className="tabs">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              className={tab.id === activeTab ? "tab active" : "tab"}
-              onClick={() => setActiveTab(tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+        <div className="app-header-inner">
+          <h1 className="brand">
+            <span className="brand-mark">PM</span>
+            <span className="brand-name">Portfolio Monitor</span>
+          </h1>
+          <nav className="tabs">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                className={tab.id === activeTab ? "tab active" : "tab"}
+                onClick={() => setActiveTab(tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </nav>
+        </div>
       </header>
 
       <main className="app-main">
-        {activeTab === "dashboard" && <Dashboard />}
-        {activeTab === "history" && <BriefHistory />}
-        {activeTab === "positions" && <PositionsManager />}
-        {activeTab === "upload" &&
-          (reviewSnapshotId ? (
-            <SnapshotReview
-              snapshotId={reviewSnapshotId}
-              onDone={handleReviewDone}
-            />
-          ) : (
-            <ScreenshotUpload onReadyForReview={handleReadyForReview} />
-          ))}
+        <div className="app-main-inner">
+          {activeTab === "dashboard" && <Dashboard />}
+          {activeTab === "history" && <BriefHistory />}
+          {activeTab === "positions" && <PositionsManager />}
+          {activeTab === "upload" &&
+            (reviewSnapshotId ? (
+              <SnapshotReview
+                snapshotId={reviewSnapshotId}
+                onDone={handleReviewDone}
+              />
+            ) : (
+              <ScreenshotUpload onReadyForReview={handleReadyForReview} />
+            ))}
+        </div>
       </main>
     </div>
   );
