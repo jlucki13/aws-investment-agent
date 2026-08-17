@@ -30,17 +30,23 @@ TTL_DAYS = int(os.environ.get("PRICE_TTL_DAYS", "400"))
 QUOTE_URL = "https://api.twelvedata.com/quote"
 TIMEOUT_SECONDS = 20
 
-# Twelve Data's free tier ("Basic 8" plan, confirmed on the account dashboard)
-# caps at 8 API credits/minute, and a batched /quote call costs one credit
-# per symbol. Deliberately NOT batching at exactly 8: sitting right on a rate
-# limit's boundary is fragile -- the client can't see the provider's own
-# window alignment, so a batch of exactly 8 can still get rejected on timing
-# that looks clean from here (observed live: a fresh 8-symbol batch, minutes
-# after the window should have reset, still came back "9 credits used, limit
-# 8"). Leaving real headroom below the ceiling, and a longer pause than the
-# bare minimum, costs nothing since this runs once a day on a schedule.
-BATCH_SIZE = int(os.environ.get("TWELVEDATA_BATCH_SIZE", "5"))
-BATCH_PAUSE_SECONDS = 65
+# Twelve Data's "Basic 8" free plan (confirmed on the account dashboard) caps
+# at 8 API credits/minute. It does NOT cost 1 credit/symbol for a batched
+# /quote call the way the docs suggested -- proven live: a genuine 5-symbol
+# batch (confirmed via logging the literal outgoing URL) was still rejected
+# as "9 credits used, limit 8," identical to what a 9-symbol batch produced,
+# while a single-symbol call succeeded cleanly outside this Lambda entirely.
+# That pattern -- any batch size >1 hitting roughly the same wall, one
+# symbol going through fine -- means the batched endpoint's real credit cost
+# on this plan doesn't scale the way it's documented. Fetching one symbol
+# per request, paced, is what's actually been proven to work.
+#
+# 12s between requests allows at most 5 requests/minute at exact intervals,
+# ~6 in the worst-case window alignment -- real margin under the 8/minute
+# ceiling rather than the 7.5/minute a bare-minimum 8s pause would allow,
+# which would again sit close enough to the limit to risk the same fragile
+# boundary problem this whole fix exists to get away from.
+REQUEST_PAUSE_SECONDS = int(os.environ.get("TWELVEDATA_REQUEST_PAUSE_SECONDS", "12"))
 
 _api_key: str | None = None
 
@@ -61,11 +67,10 @@ def get_api_key() -> str:
 
 
 def fetch_quotes(symbols: list[str]) -> dict[str, dict]:
-    """One batched call for the whole portfolio.
-
-    Twelve Data returns a bare object for a single symbol and a symbol-keyed map
-    for several, which is an easy thing to get caught by when your portfolio
-    happens to drop to one holding.
+    """One /quote call. fetch_quotes_paced always passes a single symbol (see
+    its docstring for why), but this itself still accepts a list and handles
+    both response shapes: Twelve Data returns a bare object for one symbol
+    and a symbol-keyed map for several.
     """
     if not symbols:
         return {}
@@ -74,18 +79,6 @@ def fetch_quotes(symbols: list[str]) -> dict[str, dict]:
         {"symbol": ",".join(symbols), "apikey": get_api_key()}
     )
     url = f"{QUOTE_URL}?{params}"
-
-    # TEMP diagnostic: log exactly what's being sent, key redacted. Repeated
-    # 429s claiming "9 credits used" persisted across three deployed fixes
-    # that all checked out locally (chunking logic, plan limit, build cache,
-    # exact traceback line numbers) -- logging the literal request removes
-    # all ambiguity about what's actually going out over the wire.
-    log.info(
-        "fetch_quotes: %d symbols=%s url=%s",
-        len(symbols),
-        symbols,
-        url.split("apikey=")[0] + "apikey=<redacted>",
-    )
 
     try:
         with urllib.request.urlopen(url, timeout=TIMEOUT_SECONDS) as resp:
@@ -107,29 +100,16 @@ def fetch_quotes(symbols: list[str]) -> dict[str, dict]:
     return payload
 
 
-def _chunk(items: list[str], size: int) -> list[list[str]]:
-    """Split into groups of at most `size`, preserving order. Pure -- no I/O."""
-    if size <= 0:
-        raise ValueError("size must be positive")
-    return [items[i : i + size] for i in range(0, len(items), size)]
-
-
 def fetch_quotes_paced(symbols: list[str]) -> dict[str, dict]:
-    """fetch_quotes across as many one-minute windows as the symbol count needs."""
-    batches = _chunk(symbols, BATCH_SIZE)
+    """One symbol per request, paced -- see the comment above REQUEST_PAUSE_SECONDS
+    for why batching multiple symbols into one call isn't used here."""
     quotes: dict[str, dict] = {}
 
-    for i, batch in enumerate(batches):
-        quotes.update(fetch_quotes(batch))
-        is_last = i == len(batches) - 1
+    for i, symbol in enumerate(symbols):
+        quotes.update(fetch_quotes([symbol]))
+        is_last = i == len(symbols) - 1
         if not is_last:
-            log.info(
-                "fetched %d/%d symbols; pausing %ds for Twelve Data's per-minute limit",
-                (i + 1) * BATCH_SIZE,
-                len(symbols),
-                BATCH_PAUSE_SECONDS,
-            )
-            time.sleep(BATCH_PAUSE_SECONDS)
+            time.sleep(REQUEST_PAUSE_SECONDS)
 
     return quotes
 
