@@ -91,6 +91,54 @@ echo $API
 
 ---
 
+## Frontend (S3 + CloudFront)
+
+`sam deploy` above already creates the hosting infrastructure — a private S3 bucket
+(`FrontendBucket`) and a CloudFront distribution in front of it, reached through an
+Origin Access Control so the bucket itself stays fully private. That's the same
+`template.yaml` change as any other; nothing new to run for it.
+
+What `sam deploy` does *not* do is put your built frontend files into that bucket —
+CloudFormation manages infrastructure, not file contents, and SAM has no equivalent of
+CDK's asset-bundling step for this. That's what `frontend/deploy.sh` (or
+`frontend/deploy.ps1` on Windows) is for. It looks up the bucket name and distribution
+ID from the stack itself (no hardcoded values to go stale), so it keeps working even if
+the stack is ever recreated:
+
+```bash
+cd frontend
+./deploy.sh
+```
+
+```powershell
+cd frontend
+.\deploy.ps1
+```
+
+Either script: runs `npm run build`, syncs `dist/` to the bucket with `--delete` (so
+removed files don't linger), invalidates the CloudFront cache, and prints the live
+`FrontendUrl` at the end.
+
+**A freshly created distribution can take several minutes to finish propagating to all
+edge locations.** If you hit the URL right after the first `sam deploy` and get a 404 or
+a CloudFront error page, that's very likely just propagation still in progress, not a
+broken deploy — wait a few minutes and reload before assuming something's wrong. (This
+project's history is full of "is this actually broken or does it just need more time"
+moments — the Twelve Data pacing above is another one. This is the same kind of thing.)
+
+You can also pull the URL directly, same pattern as `ApiUrl` above:
+
+```bash
+aws cloudformation describe-stacks --stack-name portfolio-monitor \
+  --query "Stacks[0].Outputs[?OutputKey=='FrontendUrl'].OutputValue" --output text
+```
+
+Re-run the deploy script any time frontend source changes — it's the only step that
+needs repeating; the S3/CloudFront infrastructure only needs `sam deploy` again if
+`template.yaml` itself changes.
+
+---
+
 ## Smoke test, in the order things were built
 
 ### Positions API
@@ -210,12 +258,10 @@ appearing is worth investigating immediately.
 
 ## Not built yet
 
-Steps 9–10 from the project plan:
-
 - **Screenshot ingestion** — the S3 bucket and its CORS config are deployed, but the
   presigned-upload endpoint, the Bedrock vision extraction Lambda, and the review screen
   aren't written. Positions go in through the API for now.
-- **React frontend** — the API is CORS-open and ready for it.
 
-Both are deliberately later. The numbers have to be right before anything is built on
-top of them.
+The React frontend itself is built and now has a real hosting path (S3 + CloudFront,
+see above) — what's still manual is running `frontend/deploy.sh`/`deploy.ps1` yourself
+after source changes, since CloudFormation doesn't watch the filesystem for you.

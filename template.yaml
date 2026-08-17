@@ -374,6 +374,103 @@ Resources:
       LogGroupName: !Sub "/aws/vendedlogs/states/${AWS::StackName}-pipeline"
       RetentionInDays: 7
 
+  # ------------------------------------------------------------------
+  # Frontend hosting
+  # ------------------------------------------------------------------
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-frontend-${AWS::AccountId}"
+      # Same private posture as ScreenshotBucket -- this bucket is never
+      # served directly. CloudFront reaches it through the OAC below, so
+      # there's no website-hosting config and no public bucket policy.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+
+  FrontendOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub "${AWS::StackName}-frontend-oac"
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        # US/Canada/Europe edge locations only -- cheapest CloudFront price
+        # class. Plenty for a single-user personal project; skip paying for
+        # South America/Asia/Australia edges nobody here will hit.
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: FrontendS3Origin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOAC.Id
+            S3OriginConfig:
+              # Empty OriginAccessIdentity is required even when access is
+              # actually governed by the OAC above -- CloudFront's older
+              # OAI field is still mandatory in the S3OriginConfig shape,
+              # it's just left blank to opt out of it.
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: FrontendS3Origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          # AWS managed "CachingOptimized" policy -- long-lived caching with
+          # gzip/brotli compression, no forwarded query strings/cookies.
+          # Fixed AWS-managed ID, same across every account/region.
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        # No client-side routing today (App.jsx is single-page, tab state
+        # only -- see task notes), but mapping 403/404 to index.html is
+        # free insurance against S3 access-denied-flavored errors on a
+        # direct refresh, and costs nothing to include now.
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+        # No custom domain / ACM cert -- the default *.cloudfront.net
+        # domain over HTTPS is sufficient for a personal project. A real
+        # domain later would need an ACM cert issued in us-east-1
+        # specifically, regardless of the stack's own region, since
+        # CloudFront only reads certs from that region.
+
+  # Grants CloudFront read access to the bucket, scoped to *this*
+  # distribution via the SourceArn condition -- without that condition
+  # any CloudFront distribution in the account (including someone else's,
+  # in a multi-tenant account) could read this bucket through the
+  # cloudfront.amazonaws.com service principal. AWS::SourceArn (not
+  # AWS::SourceAccount) is the OAC-specific condition key.
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub "${FrontendBucket.Arn}/*"
+            Condition:
+              StringEquals:
+                "AWS:SourceArn": !Sub "arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}"
+
 Outputs:
   ApiUrl:
     Description: Base URL for the API
@@ -394,3 +491,10 @@ Outputs:
   AnalyzeFunctionName:
     Description: Invoke manually with - sam remote invoke <name> --stack-name <stack>
     Value: !Ref AnalyzeFunction
+
+  FrontendUrl:
+    Description: >
+      Public URL for the React frontend. sam deploy only creates the bucket
+      and distribution -- run frontend/deploy.sh (or deploy.ps1) to actually
+      publish frontend/dist/ here.
+    Value: !Sub "https://${FrontendDistribution.DomainName}"
