@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getLatestBrief, getPositions, getPrices, ApiError } from "../api.js";
+import BriefText from "./BriefText.jsx";
 
 export default function Dashboard() {
   const [brief, setBrief] = useState(null);
@@ -88,7 +89,12 @@ export default function Dashboard() {
   return (
     <div className="dashboard">
       <section className="brief-card">
-        <p className="brief-text">{brief.text}</p>
+        <BriefText
+          text={brief.text}
+          paragraphClassName="brief-text"
+          listClassName="brief-bullets"
+          itemClassName="brief-text"
+        />
         <div className="brief-stats">
           <div className="stat">
             <span className="stat-label">Total value</span>

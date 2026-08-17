@@ -34,8 +34,10 @@ Bedrock inference.
 
 Two design rules worth knowing before reading further:
 
-- **Bedrock narrates computed facts; it never originates numbers or price opinions.**
-  Deltas, weights, and concentration are calculated in Lambda first.
+- **Bedrock narrates computed facts and suggests actions grounded in them; it
+  never originates numbers.** Deltas, weights, and concentration are calculated
+  in Lambda first, and every buy/sell/hold/rebalance suggestion in the brief
+  must cite one of those pre-computed figures.
 - **Screenshot extraction requires human confirmation** before it's committed. Vision
   models misread numbers, and a wrong cost basis corrupts everything downstream.
 

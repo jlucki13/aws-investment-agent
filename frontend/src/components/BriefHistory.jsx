@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getBriefs } from "../api.js";
+import BriefText from "./BriefText.jsx";
 
 export default function BriefHistory() {
   const [briefs, setBriefs] = useState([]);
@@ -50,7 +51,12 @@ export default function BriefHistory() {
                     : "—"}
                 </span>
               </div>
-              <p className="brief-list-text">{brief.text}</p>
+              <BriefText
+                text={brief.text}
+                paragraphClassName="brief-list-text"
+                listClassName="brief-bullets"
+                itemClassName="brief-list-text"
+              />
             </li>
           );
         })}

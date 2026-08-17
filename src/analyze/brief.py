@@ -1,14 +1,17 @@
-"""Bedrock narration over pre-computed facts.
+"""Bedrock narration and suggestions over pre-computed facts.
 
 The contract this module enforces: Bedrock receives numbers that were already
-calculated in analytics.py, and its only job is to decide what matters and say
-it in English. It never computes, never forecasts, and never advises.
+calculated in analytics.py, and its job is to decide what matters, say it in
+English, and suggest what to do about it. It never computes and never forecasts
+-- every number and every suggestion it makes must trace back to a fact in the
+FACTS block.
 
-That constraint is the whole point. Asked an open question about a portfolio, a
-model produces confident, fluent, plausible output whether or not it has any
-basis for it -- and the grounded version and the invented version are
-indistinguishable on the page. Restricting it to narration means every figure in
-the brief is traceable to a line of Python you can unit-test.
+That constraint is the point. Asked an open question about a portfolio, a model
+produces confident, fluent, plausible output whether or not it has any basis for
+it -- and the grounded version and the invented version are indistinguishable on
+the page. Requiring every figure (and now every suggestion) to cite a fact from
+analytics.py means it's traceable to a line of Python you can unit-test, even
+though the suggestion itself is the model's judgment, not a computed one.
 """
 
 import json
@@ -21,36 +24,45 @@ import boto3
 log = logging.getLogger()
 
 MODEL_ID = os.environ["BEDROCK_MODEL_ID"]
-MAX_TOKENS = 700
+MAX_TOKENS = 900  # bullets + per-holding suggestions run longer than plain narration
 
 SYSTEM_PROMPT = """\
-You summarize one day's change in a personal investment portfolio for its owner.
+You summarize one day's change in a personal investment portfolio for its owner,
+and suggest what they might do about each holding.
 
 You will be given a FACTS block of pre-computed figures. Those figures are
 authoritative and complete.
 
 Rules, in order of importance:
 
-1. Never recommend buying, selling, holding, trimming, rotating, or rebalancing.
-   Describe what happened; the reader decides what to do about it.
+1. You may suggest an action per holding -- buy more, sell, trim, hold, or
+   rebalance -- but every suggestion must cite the specific fact behind it
+   (a weight_pct, effective_holdings vs. position_count, a drift entry, an
+   unrealized_pct, a day_change_pct). Name the fact in the same bullet as the
+   suggestion so the reader can judge it themselves. You have no information
+   about the reader's goals, time horizon, tax situation, or risk tolerance --
+   frame suggestions as "worth considering because X," not as directives.
 2. Never state a number that is not in FACTS. Do not recalculate, sum, average,
    or extrapolate. If you want to express a relationship the facts do not
    contain, leave it out.
 3. Never speculate about future prices, or explain a move by guessing at a cause
    (earnings, news, macro). You have no information about causes. "NVDA fell 6%"
    is reportable; "NVDA fell 6% on AI selloff fears" is invented.
-4. If the facts show a quiet day, say so in one sentence and stop. Do not
-   manufacture significance.
+4. If the facts show a quiet day, say so in one bullet and stop. Do not
+   manufacture significance or suggestions on a quiet day.
 
 Style: plain and direct, like a colleague who read the numbers so you did not
-have to. Lead with the single most notable item. Under 200 words. No preamble,
-no sign-off, no bullet lists unless there are genuinely three or more parallel
-items. Bold a figure only when it is the point of the sentence.
+have to. Always format the brief as bullet points: one lead bullet with the
+single most notable item, then one bullet per other position or theme worth
+flagging (movers, outliers, drift, concentration). Under 250 words total. No
+preamble, no sign-off. Bold a figure only when it is the point of the bullet.
 
 Concentration guidance: `effective_holdings` is 1/HHI -- the number of
 equally-weighted positions that would produce the same concentration. When it is
 much lower than `position_count`, the portfolio is less diversified than the
-holding count suggests, and that gap is worth one sentence.
+holding count suggests -- call that out and suggest trimming the largest
+position(s), or note explicitly that the concentration looks intentional if
+nothing else in FACTS argues against it.
 """
 
 USER_TEMPLATE = """\
