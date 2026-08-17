@@ -150,31 +150,32 @@ It's also the most interesting screen in the app to build.
 | Provider | Free tier | Verdict |
 |---|---|---|
 | Alpha Vantage | **25 requests/day** | Too tight — 20 tickers exhausts it |
-| **Twelve Data** | **800 credits/day, 8 credits/minute**, batch symbols per call, 50+ exchanges | **Use this, with the caveat below** |
+| **Twelve Data** | **800 credits/day, 8 credits/minute** on the free "Basic 8" plan, 50+ exchanges | **Use this, one symbol per call — see below** |
 | Finnhub | 60 requests/min, free WebSocket | Good alternative; better if you later want intraday |
 
 All free tiers delay quotes (15 min – 4 hrs). Irrelevant here — the job runs after close
 against daily bars.
 
-Twelve Data supports batching, so one call *can* cover the whole portfolio:
+**Do not batch multiple symbols into one `/quote` call, despite what the docs suggest.**
+Twelve Data's docs describe batching as `?symbol=AAPL,MSFT,NVDA&apikey=...` costing one
+credit per symbol. That is not what happened in practice on the free "Basic 8" plan
+(confirmed as the real plan name on the account dashboard, 8 credits/minute). A genuine
+5-symbol batched call — confirmed by logging the literal outgoing URL, not assumed — was
+rejected with *"9 API credits were used, with the current limit being 8,"* the exact
+same message a 9-symbol batch produced. A single-symbol call made directly against the
+API, outside the Lambda entirely, succeeded cleanly in the same window. Any batch size
+above 1 hit roughly the same wall; exactly 1 worked. Whatever Twelve Data's real
+credit-cost formula is for a batched call on this plan, it isn't the documented linear
+one, and two fixes that trusted the docs (chunk at 8, then chunk at 5) both failed live
+before this was diagnosed by logging the actual request rather than continuing to guess.
 
-```
-GET https://api.twelvedata.com/quote?symbol=AAPL,MSFT,NVDA&apikey=...
-```
-
-That's ~21 requests/month against an 800/day limit — enormous headroom.
-
-**But the 800/day figure is not the binding limit; the 8/minute figure is.**
-A batched `/quote` call costs **one credit per symbol**, not one credit total
-— confirmed directly from a live 429 response: *"9 API credits were used,
-with the current limit being 8."* Any portfolio over 8 tickers blows the
-per-minute cap on a single batched call, every time, regardless of the daily
-pool being nowhere close to exhausted. `src/fetch_prices/app.py` handles this
-by splitting the symbol list into ≤8-symbol chunks and pausing ~61s between
-them — free to do since this runs once a day on a schedule, not on a
-user-facing request path. If you swap in a different provider, check for a
-per-minute limit separately from any daily one; "requests/day" alone
-undersells the real constraint.
+`src/fetch_prices/app.py` now fetches **one symbol per request**, paced 12 seconds apart
+— under 5 requests/minute at exact intervals, comfortable margin under the confirmed
+8/minute ceiling. Free to do since this runs once a day on a schedule, not on a
+user-facing request path; a 9-ticker portfolio takes under two minutes end to end. If you
+swap in a different provider, don't trust a "batch endpoint" claim without verifying it
+against a live rate-limit response — log the literal request and read the actual error
+body rather than assuming the documented pricing model holds.
 
 **Store the key in SSM Parameter Store as a `SecureString`** — free. Secrets Manager
 does the same job for $0.40/secret/month.

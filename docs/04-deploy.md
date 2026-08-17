@@ -118,12 +118,15 @@ array usually means a bad API key (Twelve Data returns that as HTTP 200 with an 
 body, which the fetcher checks for explicitly) or a bad/delisted symbol.
 
 **A rate limit is different: it surfaces as a genuine HTTP 429**, not a 200. Twelve
-Data's free tier caps at 8 API credits/minute, and a batched `/quote` call costs one
-credit per symbol — so once your portfolio passes 8 tickers, `sam remote invoke
-FetchPricesFunction` (and the real scheduled run) automatically splits the fetch into
-≤8-symbol chunks with a ~61s pause between them. That means a run over 8 tickers takes
-noticeably longer than one under 8 — expected, not a hang. If you invoke manually and
-it seems to sit there for a minute, that's the pause, not a stuck function.
+Data's free "Basic 8" plan caps at 8 API credits/minute. The fetcher does **not** batch
+multiple symbols into one `/quote` call — an earlier version did, on the assumption
+(straight from Twelve Data's own docs) that batching cost one credit per symbol, but a
+live 429 proved that wrong: a verified 5-symbol batched call still came back "9 credits
+used, limit 8," while a single-symbol call succeeded cleanly. So it fetches **one symbol
+per request**, paced 12 seconds apart. That means a run takes noticeably longer than a
+single instant call — roughly two minutes for a 9-ticker portfolio — which is expected,
+not a hang. If you invoke manually and it seems to sit there for a while, that's the
+pacing, not a stuck function.
 
 ### Analysis + brief
 
