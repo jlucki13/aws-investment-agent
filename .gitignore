@@ -33,3 +33,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Claude Code local tooling (agent worktrees, etc.)
+.claude/
