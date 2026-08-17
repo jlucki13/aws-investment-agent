@@ -63,13 +63,19 @@ def _previous_weights() -> dict[str, float]:
     }
 
 
+SENDER_NAME = "Jordan's AWS Portfolio Monitorer"
+
+
 def _send_email(subject: str, body: str) -> None:
     if not ALERT_EMAIL:
         log.info("ALERT_EMAIL unset - skipping email")
         return
     try:
         boto3.client("ses").send_email(
-            Source=ALERT_EMAIL,  # self-send: one verified identity covers both ends
+            # A named sender reads as less automated than a bare address --
+            # SES accepts RFC 5322 "Display Name <email>" directly in
+            # Source. Quoted because the name has an apostrophe.
+            Source=f'"{SENDER_NAME}" <{ALERT_EMAIL}>',
             Destination={"ToAddresses": [ALERT_EMAIL]},
             Message={
                 "Subject": {"Data": subject},
